@@ -101,7 +101,7 @@ def detect_emotions(frame, detector, process_emotion=True):
             should_analyze = True
         elif (current_time - cached[1]) > 1.0:
             should_analyze = True
-        elif process_emotion and (current_time - cached[1]) > 0.2:
+        elif process_emotion:
             should_analyze = True
             
         if should_analyze:
@@ -136,23 +136,29 @@ def detect_emotions(frame, detector, process_emotion=True):
         cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
         cv2.putText(frame, emotion_text, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
     
-    return frame
+    return frame, emotion_text
 
 
 class FaceCamera:
     """
     Threaded camera capture to prevent blocking Streamlit.
     """
-    def __init__(self, source=0, resize_width=640, process_every_n=2, deepface_every_n=5):
+    def __init__(self, source=0, resize_width=640):
         self.source = source
         self.resize_width = resize_width
-        self.process_every_n = process_every_n
-        self.deepface_every_n = deepface_every_n
         
-        self.cap = cv2.VideoCapture(self.source)
+        # Use DirectShow on Windows to avoid MSMF errors
+        self.cap = cv2.VideoCapture(self.source, cv2.CAP_DSHOW)
+        self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc('M', 'J', 'P', 'G'))
+        
         self.lock = threading.Lock()
         self.running = True
-        self.frame = None
+        
+        self.raw_frame = None
+        self.processed_frame = None
+        self.current_emotion = "Neutral"
+        self.latest_detections = [] # List of (box, emotion)
+        
         # Ensure model exists
         ensure_model()
         try:
@@ -161,51 +167,115 @@ class FaceCamera:
             print("Failed to load YOLO face model, falling back to standard YOLOv8n")
             self._model = YOLO("yolov8n.pt")
 
+        # Start threads
+        self.capture_thread = threading.Thread(target=self._capture_loop, daemon=True)
+        self.process_thread = threading.Thread(target=self._process_loop, daemon=True)
         
-        # Start background thread
-        self.thread = threading.Thread(target=self._update, daemon=True)
-        self.thread.start()
+        self.capture_thread.start()
+        self.process_thread.start()
 
-    def _update(self):
-        frame_count = 0
+    def _capture_loop(self):
         while self.running:
             ret, frame = self.cap.read()
             if ret:
-                frame_count += 1
-                
-                # Resize for performance
                 if self.resize_width:
                     h, w = frame.shape[:2]
                     scale = self.resize_width / w
                     frame = cv2.resize(frame, (int(w * scale), int(h * scale)))
                 
-                # Run detection
-                # Only run heavy emotion analysis every N frames
-                do_emotion = (frame_count % self.deepface_every_n == 0)
-                
-                try:
-                    frame = detect_emotions(frame, self._model, process_emotion=do_emotion)
-                except Exception as e:
-                    print(f"Detection error: {e}")
-
                 with self.lock:
-                    self.frame = frame
+                    self.raw_frame = frame
             else:
                 time.sleep(0.1)
-            time.sleep(0.01)  # Minimal sleep to allow high FPS
+            time.sleep(0.01)
+
+    def _process_loop(self):
+        while self.running:
+            frame_to_process = None
+            with self.lock:
+                if self.raw_frame is not None:
+                    frame_to_process = self.raw_frame.copy()
+            
+            if frame_to_process is not None:
+                try:
+                    # Run detection (this might be slow)
+                    # We modify detect_emotions to return just data, not draw on frame
+                    detections = self._detect_data(frame_to_process)
+                    
+                    with self.lock:
+                        self.latest_detections = detections
+                        # Update dominant emotion
+                        if detections:
+                            self.current_emotion = detections[0][1] # First face
+                except Exception as e:
+                    print(f"Processing error: {e}")
+            
+            time.sleep(0.05) # Process at ~20 FPS max to save CPU
+
+    def _detect_data(self, frame):
+        """
+        Internal method to get boxes and emotions without drawing.
+        """
+        results = self._model(frame, verbose=False)[0]
+        detections = []
+        current_time = time.time()
+        
+        for box in results.boxes:
+            x1, y1, x2, y2 = map(int, box.xyxy[0])
+            face = frame[y1:y2, x1:x2]
+            if face.size == 0: continue
+            
+            # Cache logic
+            cache_key = (round(x1 / 50), round(y1 / 50))
+            cached = _emotion_cache.get(cache_key)
+            
+            emotion_text = "Unknown"
+            should_analyze = False
+            
+            if not cached: should_analyze = True
+            elif (current_time - cached[1]) > 0.5: should_analyze = True # Re-check every 0.5s
+            
+            if should_analyze:
+                if DeepFace is not None:
+                    try:
+                        analysis = DeepFace.analyze(face, actions=["emotion"], enforce_detection=False, silent=True)
+                        emotion_text = analysis[0]["dominant_emotion"]
+                    except: pass
+                
+                if emotion_text == "Unknown" and _get_fer():
+                    try:
+                        res = _get_fer().top_emotion(face)
+                        if res: emotion_text = res[0]
+                    except: pass
+                    
+                if emotion_text == "Unknown":
+                    emotion_text = simple_fallback(face)
+                
+                _emotion_cache[cache_key] = (emotion_text, current_time)
+            else:
+                emotion_text = cached[0]
+            
+            detections.append(((x1, y1, x2, y2), emotion_text))
+            
+        return detections
 
     def get_frame_bytes(self):
         with self.lock:
-            if self.frame is None:
-                return None
-            # Convert to RGB for Streamlit
-            img_rgb = cv2.cvtColor(self.frame, cv2.COLOR_BGR2RGB)
-            return img_rgb
+            if self.raw_frame is None: return None
+            # Draw latest detections on the current raw frame
+            display_frame = self.raw_frame.copy()
+            detections = self.latest_detections
+        
+        for (x1, y1, x2, y2), emo in detections:
+            cv2.rectangle(display_frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+            cv2.putText(display_frame, emo, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+            
+        return cv2.cvtColor(display_frame, cv2.COLOR_BGR2RGB)
 
     def stop(self):
         self.running = False
-        if self.thread.is_alive():
-            self.thread.join()
+        self.capture_thread.join()
+        self.process_thread.join()
         self.cap.release()
 
 

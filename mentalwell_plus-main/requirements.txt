@@ -12,7 +12,8 @@ ultralytics
 transformers
 torch
 # pyaudio
-# deepface
+deepface
+tf-keras
 # fer
 # librosa
 # vosk

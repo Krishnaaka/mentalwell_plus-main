@@ -239,7 +239,38 @@ h2, h3 {
     font-size: 3rem;
 }
 
+/* Cursor Effect */
+.cursor-trail {
+    position: fixed;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: rgba(196, 249, 52, 0.5);
+    pointer-events: none;
+    z-index: 9999;
+    transition: transform 0.1s ease;
+    mix-blend-mode: difference;
+}
+
+/* Larger Login Input */
+.login-input input {
+    font-size: 1.2rem !important;
+    padding: 15px !important;
+}
 </style>
+<script>
+document.addEventListener('mousemove', function(e) {
+    let trail = document.createElement('div');
+    trail.className = 'cursor-trail';
+    trail.style.left = e.pageX + 'px';
+    trail.style.top = e.pageY + 'px';
+    document.body.appendChild(trail);
+    setTimeout(() => {
+        trail.style.transform = 'scale(0)';
+        setTimeout(() => { trail.remove(); }, 300);
+    }, 50);
+});
+</script>
 """, unsafe_allow_html=True)
 
 # -------------------------
@@ -392,8 +423,10 @@ def show_login():
         
         tab1, tab2 = st.tabs(["Login", "Sign Up"])
         with tab1:
+            st.markdown('<div class="login-input">', unsafe_allow_html=True)
             u = st.text_input("Username", key="login_u")
             p = st.text_input("Password", type="password", key="login_p")
+            st.markdown('</div>', unsafe_allow_html=True)
             if st.button("Enter MindWave", use_container_width=True):
                 ok, msg = verify_user(u, p)
                 if ok:
@@ -443,8 +476,39 @@ def show_dashboard():
         st.rerun()
 
 def show_face_page():
+    # Dynamic Background based on Emotion
+    emotion = "Neutral"
+    if 'face_cam' in st.session_state:
+        with st.session_state.face_cam.lock:
+            emotion = st.session_state.face_cam.current_emotion
+    
+    # Map emotion to background color/gradient overlay
+    # We keep the brain image but add a colored overlay
+    color_map = {
+        "happy": "rgba(255, 223, 0, 0.3)", # Yellow
+        "sad": "rgba(0, 0, 255, 0.3)", # Blue
+        "angry": "rgba(255, 0, 0, 0.3)", # Red
+        "surprise": "rgba(255, 105, 180, 0.3)", # Pink
+        "neutral": "rgba(0, 0, 0, 0.4)", # Dark
+        "fear": "rgba(128, 0, 128, 0.3)" # Purple
+    }
+    overlay_color = color_map.get(emotion.lower(), "rgba(0, 0, 0, 0.4)")
+    
+    # Inject dynamic CSS for overlay
+    st.markdown(f"""
+    <style>
+    .stApp::before {{
+        background: {overlay_color} !important;
+        transition: background 0.5s ease;
+    }}
+    </style>
+    """, unsafe_allow_html=True)
+
+    # Set Background Image (Base)
+    set_bg_image("assets/dashboard_health.png")
+    
     st.button("← Back", on_click=back_home)
-    st.title("Face Emotion")
+    st.title(f"Face Emotion: {emotion}")
     
     c1, c2 = st.columns([3, 1])
     with c1:
