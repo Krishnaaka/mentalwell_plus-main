@@ -144,14 +144,35 @@ def detect_emotions(frame, detector, process_emotion=True):
     return frame, emotion_text
 
 
+import av
+from streamlit_webrtc import VideoTransformerBase
+
+class VideoProcessor(VideoTransformerBase):
+    def __init__(self):
+        self.model = YOLO(MODEL_PATH)
+        # Pre-load pipeline
+        _get_pipeline()
+        self.latest_emotion = "Neutral"
+
+    def recv(self, frame: av.VideoFrame) -> av.VideoFrame:
+        img = frame.to_ndarray(format="bgr24")
+        
+        # Run detection
+        img, emotion = detect_emotions(img, self.model, process_emotion=True)
+        self.latest_emotion = emotion
+        
+        return av.VideoFrame.from_ndarray(img, format="bgr24")
+
 class FaceCamera:
     """
-    Threaded camera capture to prevent blocking Streamlit.
+    Legacy Threaded camera capture (Local Only).
+    Kept for reference or local fallback.
     """
     def __init__(self, source=0, resize_width=640):
         self.source = source
         self.resize_width = resize_width
         
+        # Use DirectShow on Windows to avoid MSMF errors
         self.cap = cv2.VideoCapture(self.source, cv2.CAP_DSHOW)
         self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc('M', 'J', 'P', 'G'))
         
@@ -163,6 +184,7 @@ class FaceCamera:
         self.current_emotion = "Neutral"
         self.latest_detections = [] # List of (box, emotion)
         
+        # Ensure model exists
         ensure_model()
         try:
             self._model = YOLO(MODEL_PATH)
@@ -207,14 +229,18 @@ class FaceCamera:
                     
                     with self.lock:
                         self.latest_detections = detections
+                        # Update dominant emotion
                         if detections:
-                            self.current_emotion = detections[0][1]
+                            self.current_emotion = detections[0][1] # First face
                 except Exception as e:
                     print(f"Processing error: {e}")
             
-            time.sleep(0.05)
+            time.sleep(0.05) # Process at ~20 FPS max to save CPU
 
     def _detect_data(self, frame):
+        """
+        Internal method to get boxes and emotions without drawing.
+        """
         results = self._model(frame, verbose=False)[0]
         detections = []
         current_time = time.time()
@@ -224,6 +250,7 @@ class FaceCamera:
             face = frame[y1:y2, x1:x2]
             if face.size == 0: continue
             
+            # Cache logic
             cache_key = (round(x1 / 50), round(y1 / 50))
             cached = _emotion_cache.get(cache_key)
             
@@ -231,7 +258,7 @@ class FaceCamera:
             should_analyze = False
             
             if not cached: should_analyze = True
-            elif (current_time - cached[1]) > 0.1: should_analyze = True
+            elif (current_time - cached[1]) > 0.1: should_analyze = True # Re-check every 0.1s
             
             if should_analyze:
                 pipe = _get_pipeline()
@@ -259,17 +286,19 @@ class FaceCamera:
     def get_frame_bytes(self):
         with self.lock:
             if self.raw_frame is None: return None
+            # Draw latest detections on the current raw frame
             display_frame = self.raw_frame.copy()
             detections = self.latest_detections
         
+            # Color map for bounding boxes (BGR format for OpenCV)
             color_map = {
-                "happy": (0, 255, 255),
-                "sad": (255, 0, 0),
-                "angry": (0, 0, 255),
-                "surprise": (180, 105, 255),
-                "neutral": (0, 255, 0),
-                "fear": (128, 0, 128),
-                "disgust": (0, 128, 0)
+                "happy": (0, 255, 255),    # Yellow
+                "sad": (255, 0, 0),        # Blue
+                "angry": (0, 0, 255),      # Red
+                "surprise": (180, 105, 255), # Pinkish
+                "neutral": (0, 255, 0),    # Green
+                "fear": (128, 0, 128),      # Purple
+                "disgust": (0, 128, 0)      # Dark Green
             }
             
             for (x1, y1, x2, y2), emo in detections:

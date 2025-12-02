@@ -17,3 +17,5 @@ tf-keras
 fer
 # librosa
 # vosk
+streamlit-webrtc
+av

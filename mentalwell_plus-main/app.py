@@ -519,45 +519,32 @@ def show_face_page():
     
     st.button("← Back", on_click=back_home)
     
-    c1, c2 = st.columns([3, 1])
-    with c1:
-        placeholder = st.empty()
-        
-        col_start, col_stop = st.columns(2)
-        if col_start.button("▶ Start Camera"):
-            st.session_state.camera_on = True
-        if col_stop.button("⏹ Stop Camera"):
-            st.session_state.camera_on = False
-            
-        if st.session_state.camera_on:
-            try:
-                from backend.face_emotion import FaceCamera
-                if 'face_cam' not in st.session_state:
-                    st.session_state.face_cam = FaceCamera()
-                cam = st.session_state.face_cam
-                
-                while st.session_state.camera_on:
-                    # 1. Get Frame
-                    frame = cam.get_frame_bytes()
-                    
-                    # 2. Get Emotion
-                    current_emo = "Neutral"
-                    with cam.lock:
-                        current_emo = cam.current_emotion
-                    
-                    # 3. Update UI
-                    update_ui(current_emo)
-                    
-                    # 4. Show Frame
-                    if frame is not None:
-                        placeholder.image(frame, use_container_width=True)
-                    else:
-                        time.sleep(0.1)
-                    time.sleep(0.03)
-            except Exception as e:
-                st.error(f"Camera error: {e}")
+    # WebRTC Streamer
+    from streamlit_webrtc import webrtc_streamer, RTCConfiguration
+    from backend.face_emotion import VideoProcessor
+
+    rtc_configuration = RTCConfiguration(
+        {"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]}
+    )
+
+    ctx = webrtc_streamer(
+        key="face-emotion",
+        mode=webrtc_streamer.WebRtcMode.SENDRECV,
+        rtc_configuration=rtc_configuration,
+        video_processor_factory=VideoProcessor,
+        async_processing=True,
+    )
+
+    if ctx.video_processor:
+        # Get the latest emotion from the processor
+        if hasattr(ctx.video_processor, "latest_emotion"):
+            current_emo = ctx.video_processor.latest_emotion
+            update_ui(current_emo)
         else:
-            placeholder.info("Camera is inactive.")
+            update_ui("Neutral")
+    else:
+        update_ui("Neutral")
+        st.info("Click 'Start' to enable the camera.")
 
 def show_voice_page():
     st.button("← Back", on_click=back_home)
