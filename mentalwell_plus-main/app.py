@@ -444,7 +444,7 @@ def show_login():
 
 def show_dashboard():
     # Set Background
-    set_bg_image("assets/dashboard_health.png")
+    set_bg_image("assets/login_bg.png")
 
     st.markdown("""
     <div class="animate-enter">
@@ -476,39 +476,48 @@ def show_dashboard():
         st.rerun()
 
 def show_face_page():
-    # Dynamic Background based on Emotion
+    # Placeholders for dynamic updates
+    bg_placeholder = st.empty()
+    title_placeholder = st.empty()
+    
+    # Initial State
     emotion = "Neutral"
     if 'face_cam' in st.session_state:
         with st.session_state.face_cam.lock:
             emotion = st.session_state.face_cam.current_emotion
-    
-    # Map emotion to background color/gradient overlay
-    # We keep the brain image but add a colored overlay
-    color_map = {
-        "happy": "rgba(255, 223, 0, 0.3)", # Yellow
-        "sad": "rgba(0, 0, 255, 0.3)", # Blue
-        "angry": "rgba(255, 0, 0, 0.3)", # Red
-        "surprise": "rgba(255, 105, 180, 0.3)", # Pink
-        "neutral": "rgba(0, 0, 0, 0.4)", # Dark
-        "fear": "rgba(128, 0, 128, 0.3)" # Purple
-    }
-    overlay_color = color_map.get(emotion.lower(), "rgba(0, 0, 0, 0.4)")
-    
-    # Inject dynamic CSS for overlay
-    st.markdown(f"""
-    <style>
-    .stApp::before {{
-        background: {overlay_color} !important;
-        transition: background 0.5s ease;
-    }}
-    </style>
-    """, unsafe_allow_html=True)
 
-    # Set Background Image (Base)
-    set_bg_image("assets/dashboard_health.png")
+    # Function to update UI based on emotion
+    def update_ui(current_emotion):
+        # Map emotion to background color/gradient overlay
+        color_map = {
+            "happy": "rgba(255, 223, 0, 0.3)", # Yellow
+            "sad": "rgba(0, 0, 255, 0.3)", # Blue
+            "angry": "rgba(255, 0, 0, 0.3)", # Red
+            "surprise": "rgba(255, 105, 180, 0.3)", # Pink
+            "neutral": "rgba(0, 0, 0, 0.4)", # Dark
+            "fear": "rgba(128, 0, 128, 0.3)" # Purple
+        }
+        overlay_color = color_map.get(current_emotion.lower(), "rgba(0, 0, 0, 0.4)")
+        
+        bg_placeholder.markdown(f"""
+        <style>
+        .stApp::before {{
+            background: {overlay_color} !important;
+            transition: background 0.5s ease;
+        }}
+        </style>
+        """, unsafe_allow_html=True)
+        
+        title_placeholder.title(f"Face Emotion: {current_emotion}")
+        print(f"DEBUG: UI Update - Emotion: {current_emotion}")
+
+    # Initial UI Update
+    update_ui(emotion)
+
+    # Set Background Image (Base) - Static
+    set_bg_image("assets/login_bg.png")
     
     st.button("← Back", on_click=back_home)
-    st.title(f"Face Emotion: {emotion}")
     
     c1, c2 = st.columns([3, 1])
     with c1:
@@ -526,8 +535,20 @@ def show_face_page():
                 if 'face_cam' not in st.session_state:
                     st.session_state.face_cam = FaceCamera()
                 cam = st.session_state.face_cam
+                
                 while st.session_state.camera_on:
+                    # 1. Get Frame
                     frame = cam.get_frame_bytes()
+                    
+                    # 2. Get Emotion
+                    current_emo = "Neutral"
+                    with cam.lock:
+                        current_emo = cam.current_emotion
+                    
+                    # 3. Update UI
+                    update_ui(current_emo)
+                    
+                    # 4. Show Frame
                     if frame is not None:
                         placeholder.image(frame, use_container_width=True)
                     else:

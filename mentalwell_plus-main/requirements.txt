@@ -14,6 +14,6 @@ torch
 # pyaudio
 deepface
 tf-keras
-# fer
+fer
 # librosa
 # vosk
